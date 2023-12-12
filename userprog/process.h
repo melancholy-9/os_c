@@ -5,6 +5,7 @@
 
 /************************ NEW CODE ***************************/
 #include "threads/synch.h"
+#include "threads/palloc.h"
 // /* Thread identifier type.
 //    You can redefine this to whatever type you like. */
 // typedef int tid_t;

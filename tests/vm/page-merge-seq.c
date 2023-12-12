@@ -50,6 +50,7 @@ sort_chunks (void)
 
       /* Write this chunk to a file. */
       quiet = true;
+      handle = open ("buffer");
       CHECK ((handle = open ("buffer")) > 1, "open \"buffer\"");
       write (handle, buf1 + CHUNK_SIZE * i, CHUNK_SIZE);
       close (handle);

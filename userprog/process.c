@@ -14,9 +14,10 @@
 #include "threads/flags.h"
 #include "threads/init.h"
 #include "threads/interrupt.h"
-#include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "vm/page.h"
+#include "vm/frame.h"
 
 
 static thread_func start_process NO_RETURN;
@@ -186,7 +187,7 @@ process_exit (void)
   }
 
   if (cur->self_file != NULL)
-  {
+  {;
     file_allow_write (cur->self_file);
     file_close (cur->self_file);
   }
@@ -198,6 +199,15 @@ process_exit (void)
     file_close (file->file_ptr);
     free (file);
   }
+  /************************ NEW CODE ***************************/
+  while (!list_empty (&cur->mmf_list))
+  {
+    e = list_begin(&cur->mmf_list);
+    struct mmf_node * mmfile = list_entry (e, struct mmf_node, elem);
+    munmap1 (mmfile->mid);
+    // free (mmfile);
+  }
+  /********************* END NEW CODE ***************************/
   
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -327,6 +337,11 @@ load (const char *file_name, void (**eip) (void), void **esp)
   if (t->pagedir == NULL) 
     goto done;
   process_activate ();
+
+  /*************** NEW CODE ****************/
+  bool a = hash_init(&t->sup_pt, sup_pte_hash, sup_pte_less, NULL);
+  ASSERT (a);
+  /*************** END NEW CODE ****************/
 
   /* Open executable file. */
   /*************** NEW CODE ****************/
@@ -519,9 +534,11 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
          and zero the final PAGE_ZERO_BYTES bytes. */
       size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
       size_t page_zero_bytes = PGSIZE - page_read_bytes;
+# ifdef VM
+      // finally, we give up lazy load...
+      // use get_free_frame instead of palloc_get_page
+      uint8_t *kpage = get_free_frame (upage);
 
-      /* Get a page of memory. */
-      uint8_t *kpage = palloc_get_page (PAL_USER);
       if (kpage == NULL)
         return false;
 
@@ -539,12 +556,13 @@ load_segment (struct file *file, off_t ofs, uint8_t *upage,
           palloc_free_page (kpage);
           return false; 
         }
-
+# endif
       /* Advance. */
       read_bytes -= page_read_bytes;
       zero_bytes -= page_zero_bytes;
       upage += PGSIZE;
     }
+  // In load segment: loading success
   return true;
 }
 
@@ -556,7 +574,8 @@ setup_stack (void **esp, char *file_name)
   uint8_t *kpage;
   bool success = false;
 
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+  // kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+  kpage = get_free_frame (((uint8_t *) PHYS_BASE) - PGSIZE);
   if (kpage != NULL) 
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);

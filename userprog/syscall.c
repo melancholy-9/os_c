@@ -7,7 +7,11 @@
 
  /************************ NEW CODE ***************************/
 #include "threads/vaddr.h"
+#include "threads/pte.h"
 #include "userprog/process.h"
+#include "vm/frame.h"
+#include "vm/page.h"
+// #include "userprog/process.c"
 // #include "file.h"
 // #include "filesys.h"
  /********************* END NEW CODE **************************/
@@ -29,6 +33,11 @@ int write1 (int fd, const void *buffer, unsigned size);
 void seek1 (int fd, unsigned position);
 unsigned tell1 (int fd);
 void close1 (int fd);
+mmapid_t mmap (int fd, void *addr);
+void munmap (mmapid_t mid);
+void mmf_free (struct mmf_node* mmf_ptr);
+
+bool is_user_vaddr_valid (void* addr, struct intr_frame *f);
 
 // when we do operations on the file, acquire the lock to 
 // ensure synchronization
@@ -48,22 +57,29 @@ syscall_handler (struct intr_frame *f UNUSED)
 {
   /************************ NEW CODE ***************************/
   struct thread * cur = thread_current();
-
+  // printf("syscall!!\n");
   // need to check for whether each arguments of the interrupt frame
   // and make sure they are in the user memory as well as they are 
   // mapped correctly to the physical memory
-  if (!is_user_vaddr(f->esp) || !pagedir_get_page(cur->pagedir, f->esp)
-      || !is_user_vaddr((int*)f->esp+1) 
-      || !pagedir_get_page(cur->pagedir, (int*)f->esp+1)
-      || !is_user_vaddr((int*)f->esp+2) 
-      || !pagedir_get_page(cur->pagedir, (int*)f->esp+2)
-      || !is_user_vaddr((int*)f->esp+3) 
-      || !pagedir_get_page(cur->pagedir, (int*)f->esp+3)){
+  // if (!is_user_vaddr(f->esp) || !pagedir_get_page(cur->pagedir, f->esp)
+  //     || !is_user_vaddr((int*)f->esp+1) 
+  //     || !pagedir_get_page(cur->pagedir, (int*)f->esp+1)
+  //     || !is_user_vaddr((int*)f->esp+2) 
+  //     || !pagedir_get_page(cur->pagedir, (int*)f->esp+2)
+  //     || !is_user_vaddr((int*)f->esp+3) 
+  //     || !pagedir_get_page(cur->pagedir, (int*)f->esp+3)){
+  //   printf("enter here!!!\n");
+  //   exit_wrong(-1);
+  // }
+  cur->cur_esp = f->esp;
+  if (!is_user_vaddr_valid(f->esp, f) 
+      || !is_user_vaddr_valid((int*)f->esp+1, f)
+      || !is_user_vaddr_valid((int*)f->esp+2, f) 
+      || !is_user_vaddr_valid((int*)f->esp+3, f)){
     exit_wrong(-1);
   }
 
   int sys_code = *(int*)f->esp;
-
   switch (sys_code)
   {
     /* Terminates Pintos by calling shutdown_power_off() */
@@ -181,10 +197,18 @@ syscall_handler (struct intr_frame *f UNUSED)
       // check for the validity of each address of buffer
       for (unsigned i=0; i<size; i++)
       {
-        if(!is_user_vaddr (buffer+i) 
-          || !pagedir_get_page (cur->pagedir, buffer+i))
+        if(is_user_vaddr_valid (buffer+i, f))
+        {
+          uint32_t * pte = lookup_page (cur->pagedir, buffer+i, false);
+          if (!(*pte & PTE_W))
+            exit_wrong(-1);
+        }
+        else
+        {
           exit_wrong(-1);
+        }
       }
+      // In sys_read, ready to read
       f->eax = read1(fd, buffer, size);
       break;
     }
@@ -243,6 +267,31 @@ syscall_handler (struct intr_frame *f UNUSED)
       int fd = *((int*)f->esp + 1);
       lock_acquire (&file_lock);
       close1(fd);
+      lock_release (&file_lock);
+      break;
+    }
+
+    /* Maps the file open as fd into the process's virtual 
+    address space. The entire file is mapped into consecutive 
+    virtual pages starting at addr.*/
+    case SYS_MMAP:
+    {
+      int fd = *((int*)f->esp + 1);
+      void* addr = (void*)(*((int*)f->esp + 2));
+      lock_acquire (&file_lock);
+      f->eax = mmap1(fd, addr);
+      lock_release (&file_lock);
+      break;
+    }
+
+    /* Unmaps the mapping designated by mapping, which must 
+    be a mapping ID returned by a previous call to mmap by 
+    the same process that has not yet been unmapped. */
+    case SYS_MUNMAP:
+    {
+      int mid = *((int*)f->esp + 1);
+      lock_acquire (&file_lock);
+      munmap1(mid);
       lock_release (&file_lock);
       break;
     }
@@ -317,9 +366,10 @@ bool remove1 (const char *file){
 int open1 (const char *file){
   lock_acquire (&file_lock);
   struct file* fptr = filesys_open(file);
-  lock_release (&file_lock);
-  if (fptr == NULL)
+  if (fptr == NULL){
+    lock_release (&file_lock);
     return -1;
+  }
   else
   // allocate the opened file node memory
   {
@@ -328,6 +378,7 @@ int open1 (const char *file){
     int result = f_node -> fd = thread_current()->fd_num++;
     f_node -> file_ptr = fptr;
     list_push_back(&thread_current()->files, &f_node -> elem);
+    lock_release (&file_lock);
     return (result);
   }
 }
@@ -381,7 +432,10 @@ int write1 (int fd, const void *buffer, unsigned size){
     struct file_node* f_node = 
       search_fd (&thread_current ()->files, fd, false);
     if(f_node != NULL)
-      return file_write (f_node->file_ptr, buffer, size);
+    {
+      int result = file_write (f_node->file_ptr, buffer, size);
+      return result;
+    }
   }
   return -1;
 }
@@ -407,4 +461,137 @@ void close1 (int fd){
   file_close (f_node -> file_ptr);
   list_remove (&f_node->elem);
   free (f_node);
+}
+
+bool is_user_vaddr_valid (void* addr, struct intr_frame *f){
+  if (addr == NULL || !is_user_vaddr(addr) || addr < 0x8048000)
+    return false;
+  struct thread * cur = thread_current ();
+  bool success = pagedir_get_page (cur->pagedir, addr);
+  if (!success){
+    if (addr > f->esp || addr == f->esp-4 || addr == f->esp-32){
+      // grow stack!
+      void *upage = pg_round_down (addr);
+      if (sup_pte_lookup (&cur->sup_pt, upage) != NULL)
+        return true;
+      void *kpage = get_free_frame (upage);
+      success = pagedir_set_page (cur->pagedir, upage, kpage, true);
+    }
+    else{
+      struct sup_page_table_entry *spte;
+      void *fault_page = pg_round_down (addr);
+	    spte = sup_pte_lookup (&cur->sup_pt, fault_page);
+      if (spte != NULL)
+        return sup_load_page (&cur->sup_pt, cur->pagedir, fault_page);
+      else
+        return false;
+    }
+  }
+  return success;
+}
+
+mmapid_t
+mmap1 (int fd, void *addr)
+{
+  struct file_node *f_node;
+  struct thread *curr = thread_current ();
+  struct file *f = NULL;
+
+  if (addr == NULL || (pg_ofs (addr) != 0) || fd == 0 || fd == 1)
+    return -1;
+
+  f_node = search_fd (&curr->files, fd, false);
+  if (f_node == NULL)
+    return -1;
+  else
+  {
+    f = file_reopen(f_node->file_ptr);
+  }
+
+  if (file_length (f_node->file_ptr) <= 0)
+    return -1;
+
+  int ofs;
+  int f_len = file_length (f_node->file_ptr);
+  for (ofs = 0; ofs < f_len; ofs += PGSIZE){
+    void *upage = pg_round_down(addr + ofs);
+    if (sup_pte_lookup 
+      (&curr->sup_pt, upage) || pagedir_get_page(curr->pagedir, upage))
+    {
+      return -1;
+    }
+    // !!! we can't combine the following part here!
+  }
+  // traverse the file pages and set them to supt sequentially
+  for (ofs = 0; ofs < f_len; ofs += PGSIZE){
+    void *page_num = addr + ofs;
+    size_t read_bytes = (ofs + PGSIZE < f_len ? PGSIZE : f_len - ofs);
+    size_t zero_bytes = PGSIZE - read_bytes;
+
+    supt_set_page_from_MMF 
+      (&curr->sup_pt, page_num, f, ofs, read_bytes, zero_bytes);
+  }
+  int f_len_new = file_length (f_node->file_ptr);
+  // create the corresponding memory mapped file
+  mmapid_t result = mmf_create (addr, f, f_len_new);
+  return (f == NULL) ? -1 : result;
+}
+
+void
+munmap1 (mmapid_t mid)
+{
+  struct thread *curr = thread_current ();
+  struct list_elem *e;
+  struct list_elem *el;
+  struct list *mmfiles = &curr->mmf_list;
+  if (list_empty (mmfiles)){
+    exit_wrong(-1);
+  }
+
+  // find the mmfile in mmf_list according to the mid!
+  for (e = list_begin (mmfiles); e != list_end (mmfiles); e = list_next (e))
+  {
+    struct mmf_node *mmfile = list_entry (e, struct mmf_node, elem);
+    if(mmfile->mid == mid)
+    {
+      // delete the file from mmf_list
+      el = list_remove (&mmfile->elem);
+      if (el != NULL)
+      {
+        struct mmf_node *mmf_ptr = list_entry (e, struct mmf_node, elem);
+        mmf_free (mmf_ptr);
+      }
+    }
+  }
+}
+
+void
+mmf_free (struct mmf_node* mmf_ptr)
+{
+  struct thread *curr = thread_current ();
+  struct hash_elem *he;
+  struct sup_page_table_entry spte;
+  struct sup_page_table_entry *spte_ptr;
+
+  // traverse the pages, delete each entry iteratively
+  for (int ofs = 0; ofs != mmf_ptr->page_num; ofs ++)
+  {
+    spte.upage = mmf_ptr->addr + ofs*PGSIZE;
+    he = hash_delete (&curr->sup_pt, &spte.hash_elem);
+    if (he != NULL)
+    {
+      spte_ptr = hash_entry (he, struct sup_page_table_entry, hash_elem);
+      // if dirty: the file has been writen
+      if (spte_ptr->status == ON_FRAME && 
+          pagedir_is_dirty (curr->pagedir, spte_ptr->upage))
+      {
+        // write it back from upage to the original file
+        file_seek (spte_ptr->file, spte_ptr->file_offset);
+        file_write (spte_ptr->file, spte_ptr->upage, spte_ptr->read_bytes);
+      }
+      free (spte_ptr);
+    }
+  }
+  // close the file !!!
+  file_close (mmf_ptr->file_ptr);
 }
