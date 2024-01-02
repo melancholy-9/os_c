@@ -8,7 +8,6 @@
 /************************ NEW CODE ***************************/
 // #include "userprog/process.h"
 #include "threads/synch.h"
-#include "filesys/directory.h"
 /********************** END NEW CODE *************************/
 
 /* States in a thread's life cycle. */
@@ -111,7 +110,7 @@ struct thread
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
-    struct list_elem allelem;           /* List element for all threads list.*/
+    struct list_elem allelem;           /* List element for all threads list. */
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
@@ -128,9 +127,6 @@ struct thread
 
     // count for the total file numbers a thread holds
     int fd_num;
-
-    // current directory
-    struct dir *pwd;
     /********************** END NEW CODE *************************/
 
 #ifdef USERPROG
@@ -190,7 +186,6 @@ struct file_node
    // file pointer
 	struct file* file_ptr;
 	struct list_elem elem;
-   struct dir* dir_ptr;
 };
 
 // used to search a file node accoding to the fd

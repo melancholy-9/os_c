@@ -53,6 +53,7 @@ make_tar_archive (const char *archive_name, char *files[], size_t file_cnt)
   bool success = true;
   bool write_error = false;
   size_t i;
+  
   if (!create (archive_name, 0)) 
     {
       printf ("%s: create failed\n", archive_name);
@@ -64,18 +65,23 @@ make_tar_archive (const char *archive_name, char *files[], size_t file_cnt)
       printf ("%s: open failed\n", archive_name);
       return false;
     }
+
   for (i = 0; i < file_cnt; i++) 
     {
       char file_name[128];
+      
       strlcpy (file_name, files[i], sizeof file_name);
       if (!archive_file (file_name, sizeof file_name,
                          archive_fd, &write_error))
         success = false;
     }
+
   if (!do_write (archive_fd, zeros, 512, &write_error)
       || !do_write (archive_fd, zeros, 512, &write_error)) 
     success = false;
+
   close (archive_fd);
+
   return success;
 }
 
@@ -90,15 +96,12 @@ archive_file (char file_name[], size_t file_name_size,
 
       if (inumber (file_fd) != inumber (archive_fd)) 
         {
-          if (!isdir (file_fd)){
+          if (!isdir (file_fd))
             success = archive_ordinary_file (file_name, file_fd,
                                              archive_fd, write_error);
-          }
-            
-          else{
+          else
             success = archive_directory (file_name, file_name_size, file_fd,
-                                         archive_fd, write_error);
-          }
+                                         archive_fd, write_error);      
         }
       else
         {

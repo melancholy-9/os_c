@@ -19,14 +19,5 @@ off_t inode_write_at (struct inode *, const void *, off_t size, off_t offset);
 void inode_deny_write (struct inode *);
 void inode_allow_write (struct inode *);
 off_t inode_length (const struct inode *);
-/************************ NEW CODE ***************************/
-// check whether the file associated with the inode is dir
-bool inode_is_dir (const struct inode *);
 
-// set the file associated with the inode a dir
-void inode_set_dir (struct inode *);
-
-// count for the number of this inode currently being open
-int inode_open_count (struct inode *);
-/********************** END NEW CODE *************************/
 #endif /* filesys/inode.h */

@@ -2,11 +2,6 @@
 #define THREADS_PALLOC_H
 
 #include <stddef.h>
-/************************ NEW CODE ***************************/
-// #include "vm/frame.c"
-// #include "thread.c"
-/********************** END NEW CODE *************************/
-
 
 /* How to allocate pages. */
 enum palloc_flags

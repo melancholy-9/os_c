@@ -186,10 +186,7 @@ thread_create (const char *name, int priority,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
-  /************************ NEW CODE ***************************/
   create_child_info (t);
-  t->pwd = thread_current ()->pwd;
-  /********************** END NEW CODE *************************/
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -465,6 +462,7 @@ running_thread (void)
 static bool
 is_thread (struct thread *t)
 {
+  // printf("/**************** %x ****************/", t->magic);
   return t != NULL && t->magic == THREAD_MAGIC;
 }
 
@@ -496,7 +494,6 @@ init_thread (struct thread *t, const char *name, int priority)
 
   list_init(&t->files);
   t->self_file = NULL;
-  t->pwd = NULL;
   /********************** END NEW CODE *************************/
   t->magic = THREAD_MAGIC;
 
@@ -624,6 +621,7 @@ uint32_t thread_stack_ofs = offsetof (struct thread, stack);
 void 
 create_child_info(struct thread * t)
 {
+  // struct child_info * info = (struct child_info *)malloc (sizeof (struct child_info));
   struct child_info * info = palloc_get_page (0);
   ASSERT (info != NULL);
   info->tid = t->tid;
@@ -640,7 +638,7 @@ search_thread (tid_t tid)
   struct list_elem *e;
   if (list_empty (&all_list))
     return NULL;
-  for (e = list_begin (&all_list); e != list_end(&all_list); e = list_next(e))
+  for (e = list_begin (&all_list); e != list_end (&all_list); e = list_next (e))
     {
       struct thread *t = list_entry (e, struct thread, elem);
       if(t->tid == tid){

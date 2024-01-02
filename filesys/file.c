@@ -2,7 +2,6 @@
 #include <debug.h>
 #include "filesys/inode.h"
 #include "threads/malloc.h"
-#include <stdio.h>
 
 /* An open file. */
 struct file 
@@ -95,12 +94,6 @@ file_read_at (struct file *file, void *buffer, off_t size, off_t file_ofs)
 off_t
 file_write (struct file *file, const void *buffer, off_t size) 
 {
-/************************ NEW CODE ***************************/
-  ASSERT (file != NULL);
-  ASSERT (buffer != NULL);
-  if (inode_is_dir (file->inode))
-    return -1;
-/********************** END NEW CODE *************************/
   off_t bytes_written = inode_write_at (file->inode, buffer, size, file->pos);
   file->pos += bytes_written;
   return bytes_written;
@@ -172,60 +165,4 @@ file_tell (struct file *file)
 {
   ASSERT (file != NULL);
   return file->pos;
-}
-
-/* Reads a directory entry from file descriptor fd, which must represent 
-  a directory. If successful, stores the null-terminated file name in name, 
-  which must have room for READDIR_MAX_LEN + 1 bytes, and returns true. 
-  If no entries are left in the directory, returns false. */
-bool 
-filesys_readdir (int fd, char *name)
-{
-  if (fd == 0 || fd == 1)
-    return false;
-  struct file_node* f_node = 
-      search_fd (&thread_current ()->files, fd, false);
-  if (f_node == NULL)
-    return false;
-  if (!inode_is_dir (f_node->file_ptr->inode))
-  {
-    return false;
-  }
-
-  struct dir *dir = f_node->dir_ptr;
-  if (dir == NULL)
-    return false;
-    
-  return dir_readdir (dir, name);
-}
-
-/* Returns true if fd represents a directory, 
-   false if it represents an ordinary file. */
-bool 
-filesys_isdir (int fd)
-{
-  if (fd == 0 || fd == 1)
-    return false;
-  struct file_node* f_node = 
-      search_fd (&thread_current ()->files, fd, false);
-  if (f_node == NULL)
-    return false;
-  return inode_is_dir (f_node->file_ptr->inode);
-}
-
-/* Returns the inode number of the inode associated with fd, 
-   which may represent an ordinary file or a directory.
-   An inode number persistently identifies a file or directory. 
-   It is unique during the file's existence. In Pintos, the 
-   sector number of the inode is suitable for use as an inode number. */
-int 
-filesys_inumber (int fd)
-{
-  if (fd == 0 || fd == 1)
-    return false;
-  struct file_node* f_node = 
-      search_fd (&thread_current ()->files, fd, false);
-  if (f_node == NULL)
-    return false;
-  return inode_get_inumber (f_node->file_ptr->inode);
 }
