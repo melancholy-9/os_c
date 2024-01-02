@@ -5,6 +5,8 @@
 #include "filesys/filesys.h"
 #include "filesys/inode.h"
 #include "threads/malloc.h"
+#include "threads/thread.h"
+#include "threads/vaddr.h"
 
 /* A directory. */
 struct dir 
@@ -26,7 +28,26 @@ struct dir_entry
 bool
 dir_create (block_sector_t sector, size_t entry_cnt)
 {
-  return inode_create (sector, entry_cnt * sizeof (struct dir_entry));
+  // return inode_create (sector, entry_cnt * sizeof (struct dir_entry));
+  /************************ NEW CODE ***************************/
+  bool success = inode_create (sector, (entry_cnt+2) 
+                  * sizeof (struct dir_entry));
+  if (success)
+    {
+      struct inode* inode = inode_open (sector);
+      ASSERT (inode != NULL);
+      inode_set_dir (inode);
+
+      struct dir* dir = dir_open (inode);
+      ASSERT (dir != NULL);
+      // add . to directory
+      ASSERT (dir_add(dir, ".", sector));
+      // add .. to directory
+      ASSERT (dir_add(dir, "..", sector));
+      dir_close(dir);
+    }
+  return success;
+  /********************** END NEW CODE *************************/
 }
 
 /* Opens and returns the directory for the given INODE, of which
@@ -37,8 +58,10 @@ dir_open (struct inode *inode)
   struct dir *dir = calloc (1, sizeof *dir);
   if (inode != NULL && dir != NULL)
     {
+      /************************ NEW CODE ***************************/
       dir->inode = inode;
-      dir->pos = 0;
+      dir->pos = 2 * sizeof(struct dir_entry);
+      /********************** END NEW CODE *************************/
       return dir;
     }
   else
@@ -174,6 +197,34 @@ dir_add (struct dir *dir, const char *name, block_sector_t inode_sector)
   e.inode_sector = inode_sector;
   success = inode_write_at (dir->inode, &e, sizeof e, ofs) == sizeof e;
 
+  /************************ NEW CODE ***************************/
+  if (name[0] == '.')
+    goto done;
+  if (success)
+    {
+      struct inode* inode = inode_open (inode_sector);
+      ASSERT (inode != NULL);
+
+      if (inode_is_dir (inode))
+        {
+          // whether file added is a directory
+          struct dir* d = dir_open (inode);
+          ASSERT (d != NULL);
+
+          struct dir_entry ep;
+          off_t ofsp;
+          ASSERT (lookup (d, "..", &ep, &ofsp));
+          ep.inode_sector = inode_get_inumber (dir->inode);
+          ASSERT (inode_write_at (d->inode, &ep, sizeof (ep), ofsp)
+                   == sizeof (ep));
+          dir_close (d);
+        }
+      else
+        {
+          inode_close (inode);
+        }
+    }
+  /********************** END NEW CODE *************************/
  done:
   return success;
 }
@@ -234,3 +285,104 @@ dir_readdir (struct dir *dir, char name[NAME_MAX + 1])
     }
   return false;
 }
+
+/************************ NEW CODE ***************************/
+// divide the path into directory and file name
+bool 
+dir_divide (char *name, struct dir *cur_dir, struct dir **ret_dir,
+            char **ret_name)
+{
+  ASSERT (cur_dir != NULL);
+  if (*name == NULL){
+    return false;
+  }
+  
+  char *path = malloc(strlen (name) + 1);
+  strlcpy (path, name, PGSIZE);
+  char *token, *save_ptr;
+  struct inode *inode = NULL;
+  if (name[0] == '/')
+    {
+      // under root directory
+      dir_close (cur_dir);
+      cur_dir = dir_open_root ();
+    }
+  // count for directories
+  int count = 0;
+  // divide the path by '/'
+  for (token = strtok_r (path, "/", &save_ptr); token != NULL;
+      token = strtok_r (NULL, "/", &save_ptr))
+    {
+      count++;
+    }
+  int i = 0;
+  strlcpy (path, name, PGSIZE);
+  for (token = strtok_r (path, "/", &save_ptr); token != NULL;
+      token = strtok_r (NULL, "/", &save_ptr))
+    {
+      if (i==count-1)
+        break;
+      // search every token in the current directory
+      if (!dir_lookup (cur_dir, token, &inode))
+        {
+          dir_close (cur_dir);
+          free (path);
+          return false;
+        }
+      dir_close (cur_dir);
+      cur_dir = dir_open (inode);
+      i++;
+    }
+  *ret_dir = dir_reopen(cur_dir);
+  if (token == NULL)
+    {
+      (*ret_name)[0] = '.';
+      (*ret_name)[1] = '\0';
+    }
+  else
+    strlcpy(*ret_name, token, 15);
+  dir_close (cur_dir);
+  free (path);
+  return true;
+}
+
+// whether DIR is empty
+bool 
+dir_empty (struct dir *dir)
+{
+  struct dir_entry e;
+  size_t ofs;
+  
+  ASSERT (dir != NULL);
+  int count = 0;
+  for (ofs = 0; inode_read_at (dir->inode, &e, sizeof e, ofs) == sizeof e;
+       ofs += sizeof e) 
+    if (e.in_use) 
+      {
+        count++;
+      }
+  return count == 2;
+}
+
+// clear DIR
+bool 
+dir_clear (struct dir *dir)
+{
+  struct dir_entry e;
+  size_t ofs;
+  
+  ASSERT (dir != NULL);
+  int count = 0;
+  for (ofs = 0; inode_read_at (dir->inode, &e, sizeof e, ofs) == sizeof e;
+       ofs += sizeof e) 
+    {
+      if (e.in_use)
+        {
+          count++;
+          e.in_use = false;
+        }
+    }
+  ASSERT (count==2);
+  return true;
+}
+/********************** END NEW CODE *************************/

@@ -110,6 +110,14 @@ palloc_get_multiple (enum palloc_flags flags, size_t page_cnt)
 void *
 palloc_get_page (enum palloc_flags flags) 
 {
+  /************************ NEW CODE ***************************/
+  // void *kpage = palloc_get_multiple (flags, 1);
+  // if (flags & PAL_USER)
+  // {
+  //   frame_table_set_page (kpage);
+  // }
+  // return kpage;
+  /********************** END NEW CODE *************************/
   return palloc_get_multiple (flags, 1);
 }
 

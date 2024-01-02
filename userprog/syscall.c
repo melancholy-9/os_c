@@ -4,6 +4,9 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "list.h"
+#include "filesys/filesys.h"
+#include "filesys/file.h"
+#include "filesys/inode.h"
 
  /************************ NEW CODE ***************************/
 #include "threads/vaddr.h"
@@ -29,6 +32,14 @@ int write1 (int fd, const void *buffer, unsigned size);
 void seek1 (int fd, unsigned position);
 unsigned tell1 (int fd);
 void close1 (int fd);
+
+#ifdef FILESYS
+bool chdir1 (const char *dir);
+bool mkdir1 (const char *dir);
+bool readdir1 (int fd, char *name);
+bool isdir1 (int fd);
+int inumber1 (int fd);
+#endif
 
 // when we do operations on the file, acquire the lock to 
 // ensure synchronization
@@ -63,7 +74,6 @@ syscall_handler (struct intr_frame *f UNUSED)
   }
 
   int sys_code = *(int*)f->esp;
-
   switch (sys_code)
   {
     /* Terminates Pintos by calling shutdown_power_off() */
@@ -247,6 +257,84 @@ syscall_handler (struct intr_frame *f UNUSED)
       break;
     }
 
+    #ifdef FILESYS
+    /* Changes the current working directory of the process to dir, 
+       which may be relative or absolute. Returns true if successful, 
+       false on failure. */
+    case SYS_CHDIR: 
+    {
+      char *dir = (char *)(*((int*)f->esp + 1));
+
+      for (char * p = dir; ; p++)
+      {
+        if(!is_user_vaddr (p) || !pagedir_get_page (cur->pagedir, p))
+          exit_wrong(-1);
+        if (*p == '\0')
+          break;
+      }
+      f->eax = chdir1(dir);
+      break;
+      }
+
+    /* Creates the directory named dir, which may be relative or absolute. 
+       Returns true if successful, false on failure. Fails if dir already 
+       exists or if any directory name in dir, besides the last, 
+       does not already exist. */
+    case SYS_MKDIR:
+    {
+      char *dir = (char *)(*((int*)f->esp + 1));
+
+      for (char * p = dir; ; p++)
+      {
+        if(!is_user_vaddr (p) || !pagedir_get_page (cur->pagedir, p))
+          exit_wrong(-1);
+        if (*p == '\0')
+          break;
+      }
+      f->eax = mkdir1(dir);
+      break;
+      }
+
+    /* Reads a directory entry from file descriptor fd, which must represent 
+       a directory. If successful, stores the null-terminated file name in 
+      name, which must have room for READDIR_MAX_LEN + 1 bytes, and returns 
+      true. If no entries are left in the directory, returns false. */
+    case SYS_READDIR: 
+    {
+      int fd = *((int*)f->esp + 1);
+      char *name = (void*)(*((int*)f->esp + 2));
+
+      for (char * p = name; ; p++)
+      {
+        if(!is_user_vaddr (p) || !pagedir_get_page (cur->pagedir, p))
+          exit_wrong(-1);
+        if (*p == '\0')
+          break;
+      }
+      f->eax = readdir1(fd, name);
+      break;
+    }
+
+    /* Returns true if fd represents a directory, 
+       false if it represents an ordinary file. */
+    case SYS_ISDIR:
+    {
+      int fd = *((int*)f->esp + 1);
+      f->eax = isdir1(fd);
+      break;
+    }
+
+    /* Returns the inode number of the inode associated with fd, 
+       which may represent an ordinary file or a directory. */
+    case SYS_INUMBER:
+    {
+      int fd = *((int*)f->esp + 1);
+      f->eax = inumber1(fd);
+      break;
+    }
+
+#endif
+
     default:
       exit_wrong(-1);
       break;
@@ -276,9 +364,9 @@ tid_t exec1 (const char *cmd_line){
   else
   {
     char * fn_cp = malloc (strlen(cmd_line)+1);
-	  strlcpy(fn_cp, cmd_line, strlen(cmd_line)+1);
-	  char * save_ptr;
-	  fn_cp = strtok_r(fn_cp," ",&save_ptr);
+   strlcpy(fn_cp, cmd_line, strlen(cmd_line)+1);
+   char * save_ptr;
+   fn_cp = strtok_r(fn_cp," ",&save_ptr);
 
     // check for whether 'com_line' is actually an exist file 
     struct dir *dir = dir_open_root ();
@@ -327,6 +415,10 @@ int open1 (const char *file){
         (struct file_node *) malloc (sizeof (struct file_node));
     int result = f_node -> fd = thread_current()->fd_num++;
     f_node -> file_ptr = fptr;
+    if (inode_is_dir (file_get_inode (fptr)))
+      f_node->dir_ptr = dir_open (file_get_inode (fptr));
+    else
+      f_node->dir_ptr = NULL;
     list_push_back(&thread_current()->files, &f_node -> elem);
     return (result);
   }
@@ -408,3 +500,40 @@ void close1 (int fd){
   list_remove (&f_node->elem);
   free (f_node);
 }
+
+#ifdef FILESYS
+bool chdir1 (const char *dir){
+  lock_acquire (&file_lock);
+  bool ret = filesys_chdir (dir);
+  lock_release (&file_lock);
+  return ret;
+}
+
+bool mkdir1 (const char *dir){
+  lock_acquire (&file_lock);
+  bool ret = filesys_mkdir (dir);
+  lock_release (&file_lock);
+  return ret;
+}
+
+bool readdir1 (int fd, char *name){
+  lock_acquire (&file_lock);
+  bool ret = filesys_readdir (fd, name);
+  lock_release (&file_lock);
+  return ret;
+}
+
+bool isdir1 (int fd){
+  lock_acquire (&file_lock);
+  bool ret = filesys_isdir (fd);
+  lock_release (&file_lock);
+  return ret;
+}
+
+int inumber1 (int fd){
+  lock_acquire (&file_lock);
+  int ret = filesys_inumber (fd);
+  lock_release (&file_lock);
+  return ret;
+}
+#endif
