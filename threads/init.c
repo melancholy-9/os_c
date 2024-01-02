@@ -36,14 +36,7 @@
 #include "devices/ide.h"
 #include "filesys/filesys.h"
 #include "filesys/fsutil.h"
-#include "filesys/directory.h"
 #endif
-/******************** NEW CODE *******************/
-#ifdef VM
-#include "vm/frame.h"
-#include "vm/swap.h"
-#endif
-/***************** END NEW CODE ******************/
 
 /* Page directory with kernel mappings only. */
 uint32_t *init_page_dir;
@@ -133,18 +126,10 @@ main (void)
   locate_block_devices ();
   filesys_init (format_filesys);
 #endif
-/****************** NEW CODE ******************/
-// proj3
-#ifdef VM
-  init_frame_table ();
-  swap_init ();
-#endif
-/***************** END NEW CODE ******************/
 
   printf ("Boot complete.\n");
   
   /* Run actions specified on kernel command line. */
-  dir_open_root();
   run_actions (argv);
 
   /* Finish up. */

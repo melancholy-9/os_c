@@ -11,8 +11,6 @@
 #include "threads/switch.h"
 #include "threads/synch.h"
 #include "threads/vaddr.h"
-#include "vm/frame.h"
-#include "vm/page.h"
 #ifdef USERPROG
 #include "userprog/process.h"
 #endif
@@ -38,8 +36,6 @@ static struct thread *initial_thread;
 
 /* Lock used by allocate_tid(). */
 static struct lock tid_lock;
-
-static struct lock mid_lock;
 
 /* Stack frame for kernel_thread(). */
 struct kernel_thread_frame 
@@ -76,7 +72,7 @@ void thread_schedule_tail (struct thread *prev);
 static tid_t allocate_tid (void);
 /************************ NEW CODE ***************************/
 void create_child_info(struct thread *);
-/********************** END NEW CODE *************************/
+/********************** END NEW CODE **************************/
 
 /* Initializes the threading system by transforming the code
    that's currently running into a thread.  This can't work in
@@ -97,14 +93,8 @@ thread_init (void)
   ASSERT (intr_get_level () == INTR_OFF);
 
   lock_init (&tid_lock);
-  lock_init (&mid_lock);
   list_init (&ready_list);
   list_init (&all_list);
-
-/************************ NEW CODE ***************************/
-  // list_init (&frame_table);
-  // init_frame_table ();
-/********************** END NEW CODE *************************/
 
   /* Set up a thread structure for the running thread. */
   initial_thread = running_thread ();
@@ -196,7 +186,10 @@ thread_create (const char *name, int priority,
   /* Initialize thread. */
   init_thread (t, name, priority);
   tid = t->tid = allocate_tid ();
+  /************************ NEW CODE ***************************/
   create_child_info (t);
+  t->pwd = thread_current ()->pwd;
+  /********************** END NEW CODE *************************/
 
   /* Stack frame for kernel_thread(). */
   kf = alloc_frame (t, sizeof *kf);
@@ -472,7 +465,6 @@ running_thread (void)
 static bool
 is_thread (struct thread *t)
 {
-  // printf("/**************** %x ****************/", t->magic);
   return t != NULL && t->magic == THREAD_MAGIC;
 }
 
@@ -504,14 +496,7 @@ init_thread (struct thread *t, const char *name, int priority)
 
   list_init(&t->files);
   t->self_file = NULL;
-  t->cur_esp = NULL;
-  /********************** END NEW CODE *************************/
-
-  /************************ NEW CODE ***************************/
-  // TODO: init sup_pt
-  // t->sup_pt = init_sup_pt();
-  // hash_init(&t->sup_pt, sup_pte_hash, sup_pte_less, NULL);
-  list_init(&t->mmf_list);
+  t->pwd = NULL;
   /********************** END NEW CODE *************************/
   t->magic = THREAD_MAGIC;
 
@@ -639,8 +624,6 @@ uint32_t thread_stack_ofs = offsetof (struct thread, stack);
 void 
 create_child_info(struct thread * t)
 {
-  // struct child_info * info = 
-  //  (struct child_info *)malloc (sizeof (struct child_info));
   struct child_info * info = palloc_get_page (0);
   ASSERT (info != NULL);
   info->tid = t->tid;
@@ -657,8 +640,7 @@ search_thread (tid_t tid)
   struct list_elem *e;
   if (list_empty (&all_list))
     return NULL;
-  for (e = list_begin (&all_list); 
-    e != list_end (&all_list); e = list_next (e))
+  for (e = list_begin (&all_list); e != list_end(&all_list); e = list_next(e))
     {
       struct thread *t = list_entry (e, struct thread, elem);
       if(t->tid == tid){
@@ -705,47 +687,3 @@ search_fd(struct list * files, int fd, bool close_f)
   return NULL;
 }
 /********************** END NEW CODE *************************/
-// allocate unique id for mmf, similar to allocate_tid
-static mmapid_t
-allocate_mid (void) 
-{
-  static mmapid_t next_mid = 1;
-  mmapid_t mid;
-
-  lock_acquire (&mid_lock);
-  mid = next_mid++;
-  lock_release (&mid_lock);
-
-  return mid;
-}
-
-// create a mmf and set for mmf_node
-mmapid_t
-mmf_create (void *addr, struct file* file, int32_t len)
-{
-  struct thread *curr = thread_current ();
-  int page_num = 0;
-
-  struct mmf_node *mmfile = 
-  (struct mmf_node*) malloc(sizeof(struct mmf_node));
-  if (mmfile == NULL)
-  {
-    // In mmf_create, mmfile = NULL, return -1
-    return -1;
-  }
-
-  mmfile->mid = allocate_mid ();
-  mmfile->file_ptr = file;
-  mmfile->addr = addr;
-
-  // naive method to get page number...
-  while (len > 0)
-  {
-    len -= PGSIZE;
-    page_num ++;
-  }
-  mmfile->page_num = page_num;  
-  list_push_back (&curr->mmf_list, &mmfile->elem);
-
-  return mmfile->mid;
-}

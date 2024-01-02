@@ -6,8 +6,6 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 
-#define MAX_STACK_SIZE 0x800000
-
 /* Number of page faults processed. */
 static long long page_fault_cnt;
 
@@ -152,43 +150,8 @@ page_fault (struct intr_frame *f)
   user = (f->error_code & PF_U) != 0;
 
   /**********************NEW CODE**********************/
-#if VM
-   void *fault_page = pg_round_down (fault_addr);
-   struct thread * cur = thread_current ();
-   struct sup_page_table_entry *spte;
-   void *esp = user ? f->esp : cur->cur_esp;
-   // the page is not in pagedir
-   if (not_present)
-   {
-      bool is_stack_addr = (fault_addr != NULL && is_user_vaddr(fault_addr)
-                           && fault_addr >= 0x8048000 );
-      bool on_stack = (fault_addr > esp || fault_addr == esp-4 
-                           || fault_addr == esp-32);
-      spte = sup_pte_lookup (&cur->sup_pt, fault_page);
-      // can't find spte: install page
-      if (is_stack_addr && on_stack && spte == NULL)
-      {
-         void *kpage = get_free_frame (fault_page);
-         pagedir_set_page (cur->pagedir, fault_page, kpage, true);
-         return;
-      }
-      // can find spte: load it back
-      if (sup_load_page (&cur->sup_pt, cur->pagedir, fault_page))
-         return;
-      // load failed: exit the thread
-      else
-      {
-         thread_current()->exit_code = -1;
-         thread_exit();
-      }
-   }
-   else
-   {
-      thread_current()->exit_code = -1;
-      thread_exit();
-   }
-#endif
-   
+//   if(not_present || is_kernel_vaddr(fault_addr) && user)
+//    exit_wrong(-1);
   /******************* END NEW CODE********************/
 
   /* To implement virtual memory, delete the rest of the function

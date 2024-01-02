@@ -4,12 +4,11 @@
 #include <debug.h>
 #include <list.h>
 #include <stdint.h>
-#include <hash.h>
 
 /************************ NEW CODE ***************************/
 // #include "userprog/process.h"
 #include "threads/synch.h"
-
+#include "filesys/directory.h"
 /********************** END NEW CODE *************************/
 
 /* States in a thread's life cycle. */
@@ -112,7 +111,7 @@ struct thread
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
     int priority;                       /* Priority. */
-    struct list_elem allelem;           /* List element for all threads list. */
+    struct list_elem allelem;           /* List element for all threads list.*/
 
     /* Shared between thread.c and synch.c. */
     struct list_elem elem;              /* List element. */
@@ -129,18 +128,15 @@ struct thread
 
     // count for the total file numbers a thread holds
     int fd_num;
-    void *cur_esp;
+
+    // current directory
+    struct dir *pwd;
     /********************** END NEW CODE *************************/
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
 #endif
-
-   /************************ NEW CODE ***************************/
-    struct hash sup_pt;
-    struct list mmf_list;
-   /********************** END NEW CODE *************************/
 
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
@@ -194,32 +190,12 @@ struct file_node
    // file pointer
 	struct file* file_ptr;
 	struct list_elem elem;
+   struct dir* dir_ptr;
 };
 
 // used to search a file node accoding to the fd
 struct file_node * search_fd(struct list *, int, bool);
 
-/********************** END NEW CODE *************************/
-
-/************************ NEW CODE ***************************/
-typedef int mmapid_t;
-
-// similar to file_node in proj2
-struct mmf_node
-{
-   // mapping id for mmf
-   mmapid_t mid;
-   // number of pages in an mmf
-   int page_num;
-   // file pointer
-   struct file* file_ptr;
-   struct list_elem elem;
-   // user virtual address for mmf
-   void *addr;
-};
-
-// create a mmf
-mmapid_t mmf_create (void *addr, struct file* file, int32_t len);
 /********************** END NEW CODE *************************/
 
 #endif /* threads/thread.h */

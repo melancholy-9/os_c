@@ -4,14 +4,13 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "list.h"
+#include "filesys/filesys.h"
+#include "filesys/file.h"
+#include "filesys/inode.h"
 
  /************************ NEW CODE ***************************/
 #include "threads/vaddr.h"
-#include "threads/pte.h"
 #include "userprog/process.h"
-#include "vm/frame.h"
-#include "vm/page.h"
-// #include "userprog/process.c"
 // #include "file.h"
 // #include "filesys.h"
  /********************* END NEW CODE **************************/
@@ -33,11 +32,14 @@ int write1 (int fd, const void *buffer, unsigned size);
 void seek1 (int fd, unsigned position);
 unsigned tell1 (int fd);
 void close1 (int fd);
-mmapid_t mmap (int fd, void *addr);
-void munmap (mmapid_t mid);
-void mmf_free (struct mmf_node* mmf_ptr);
 
-bool is_user_vaddr_valid (void* addr, struct intr_frame *f);
+#ifdef FILESYS
+bool chdir1 (const char *dir);
+bool mkdir1 (const char *dir);
+bool readdir1 (int fd, char *name);
+bool isdir1 (int fd);
+int inumber1 (int fd);
+#endif
 
 // when we do operations on the file, acquire the lock to 
 // ensure synchronization
@@ -57,25 +59,17 @@ syscall_handler (struct intr_frame *f UNUSED)
 {
   /************************ NEW CODE ***************************/
   struct thread * cur = thread_current();
-  // printf("syscall!!\n");
+
   // need to check for whether each arguments of the interrupt frame
   // and make sure they are in the user memory as well as they are 
   // mapped correctly to the physical memory
-  // if (!is_user_vaddr(f->esp) || !pagedir_get_page(cur->pagedir, f->esp)
-  //     || !is_user_vaddr((int*)f->esp+1) 
-  //     || !pagedir_get_page(cur->pagedir, (int*)f->esp+1)
-  //     || !is_user_vaddr((int*)f->esp+2) 
-  //     || !pagedir_get_page(cur->pagedir, (int*)f->esp+2)
-  //     || !is_user_vaddr((int*)f->esp+3) 
-  //     || !pagedir_get_page(cur->pagedir, (int*)f->esp+3)){
-  //   printf("enter here!!!\n");
-  //   exit_wrong(-1);
-  // }
-  cur->cur_esp = f->esp;
-  if (!is_user_vaddr_valid(f->esp, f) 
-      || !is_user_vaddr_valid((int*)f->esp+1, f)
-      || !is_user_vaddr_valid((int*)f->esp+2, f) 
-      || !is_user_vaddr_valid((int*)f->esp+3, f)){
+  if (!is_user_vaddr(f->esp) || !pagedir_get_page(cur->pagedir, f->esp)
+      || !is_user_vaddr((int*)f->esp+1) 
+      || !pagedir_get_page(cur->pagedir, (int*)f->esp+1)
+      || !is_user_vaddr((int*)f->esp+2) 
+      || !pagedir_get_page(cur->pagedir, (int*)f->esp+2)
+      || !is_user_vaddr((int*)f->esp+3) 
+      || !pagedir_get_page(cur->pagedir, (int*)f->esp+3)){
     exit_wrong(-1);
   }
 
@@ -197,18 +191,10 @@ syscall_handler (struct intr_frame *f UNUSED)
       // check for the validity of each address of buffer
       for (unsigned i=0; i<size; i++)
       {
-        if(is_user_vaddr_valid (buffer+i, f))
-        {
-          uint32_t * pte = lookup_page (cur->pagedir, buffer+i, false);
-          if (!(*pte & PTE_W))
-            exit_wrong(-1);
-        }
-        else
-        {
+        if(!is_user_vaddr (buffer+i) 
+          || !pagedir_get_page (cur->pagedir, buffer+i))
           exit_wrong(-1);
-        }
       }
-      // In sys_read, ready to read
       f->eax = read1(fd, buffer, size);
       break;
     }
@@ -271,30 +257,83 @@ syscall_handler (struct intr_frame *f UNUSED)
       break;
     }
 
-    /* Maps the file open as fd into the process's virtual 
-    address space. The entire file is mapped into consecutive 
-    virtual pages starting at addr.*/
-    case SYS_MMAP:
+    #ifdef FILESYS
+    /* Changes the current working directory of the process to dir, 
+       which may be relative or absolute. Returns true if successful, 
+       false on failure. */
+    case SYS_CHDIR: 
+    {
+      char *dir = (char *)(*((int*)f->esp + 1));
+
+      for (char * p = dir; ; p++)
+      {
+        if(!is_user_vaddr (p) || !pagedir_get_page (cur->pagedir, p))
+          exit_wrong(-1);
+        if (*p == '\0')
+          break;
+      }
+      f->eax = chdir1(dir);
+      break;
+      }
+
+    /* Creates the directory named dir, which may be relative or absolute. 
+       Returns true if successful, false on failure. Fails if dir already 
+       exists or if any directory name in dir, besides the last, 
+       does not already exist. */
+    case SYS_MKDIR:
+    {
+      char *dir = (char *)(*((int*)f->esp + 1));
+
+      for (char * p = dir; ; p++)
+      {
+        if(!is_user_vaddr (p) || !pagedir_get_page (cur->pagedir, p))
+          exit_wrong(-1);
+        if (*p == '\0')
+          break;
+      }
+      f->eax = mkdir1(dir);
+      break;
+      }
+
+    /* Reads a directory entry from file descriptor fd, which must represent 
+       a directory. If successful, stores the null-terminated file name in 
+      name, which must have room for READDIR_MAX_LEN + 1 bytes, and returns 
+      true. If no entries are left in the directory, returns false. */
+    case SYS_READDIR: 
     {
       int fd = *((int*)f->esp + 1);
-      void* addr = (void*)(*((int*)f->esp + 2));
-      lock_acquire (&file_lock);
-      f->eax = mmap1(fd, addr);
-      lock_release (&file_lock);
+      char *name = (void*)(*((int*)f->esp + 2));
+
+      for (char * p = name; ; p++)
+      {
+        if(!is_user_vaddr (p) || !pagedir_get_page (cur->pagedir, p))
+          exit_wrong(-1);
+        if (*p == '\0')
+          break;
+      }
+      f->eax = readdir1(fd, name);
       break;
     }
 
-    /* Unmaps the mapping designated by mapping, which must 
-    be a mapping ID returned by a previous call to mmap by 
-    the same process that has not yet been unmapped. */
-    case SYS_MUNMAP:
+    /* Returns true if fd represents a directory, 
+       false if it represents an ordinary file. */
+    case SYS_ISDIR:
     {
-      int mid = *((int*)f->esp + 1);
-      lock_acquire (&file_lock);
-      munmap1(mid);
-      lock_release (&file_lock);
+      int fd = *((int*)f->esp + 1);
+      f->eax = isdir1(fd);
       break;
     }
+
+    /* Returns the inode number of the inode associated with fd, 
+       which may represent an ordinary file or a directory. */
+    case SYS_INUMBER:
+    {
+      int fd = *((int*)f->esp + 1);
+      f->eax = inumber1(fd);
+      break;
+    }
+
+#endif
 
     default:
       exit_wrong(-1);
@@ -325,9 +364,9 @@ tid_t exec1 (const char *cmd_line){
   else
   {
     char * fn_cp = malloc (strlen(cmd_line)+1);
-	  strlcpy(fn_cp, cmd_line, strlen(cmd_line)+1);
-	  char * save_ptr;
-	  fn_cp = strtok_r(fn_cp," ",&save_ptr);
+   strlcpy(fn_cp, cmd_line, strlen(cmd_line)+1);
+   char * save_ptr;
+   fn_cp = strtok_r(fn_cp," ",&save_ptr);
 
     // check for whether 'com_line' is actually an exist file 
     struct dir *dir = dir_open_root ();
@@ -366,10 +405,9 @@ bool remove1 (const char *file){
 int open1 (const char *file){
   lock_acquire (&file_lock);
   struct file* fptr = filesys_open(file);
-  if (fptr == NULL){
-    lock_release (&file_lock);
+  lock_release (&file_lock);
+  if (fptr == NULL)
     return -1;
-  }
   else
   // allocate the opened file node memory
   {
@@ -377,8 +415,11 @@ int open1 (const char *file){
         (struct file_node *) malloc (sizeof (struct file_node));
     int result = f_node -> fd = thread_current()->fd_num++;
     f_node -> file_ptr = fptr;
+    if (inode_is_dir (file_get_inode (fptr)))
+      f_node->dir_ptr = dir_open (file_get_inode (fptr));
+    else
+      f_node->dir_ptr = NULL;
     list_push_back(&thread_current()->files, &f_node -> elem);
-    lock_release (&file_lock);
     return (result);
   }
 }
@@ -432,10 +473,7 @@ int write1 (int fd, const void *buffer, unsigned size){
     struct file_node* f_node = 
       search_fd (&thread_current ()->files, fd, false);
     if(f_node != NULL)
-    {
-      int result = file_write (f_node->file_ptr, buffer, size);
-      return result;
-    }
+      return file_write (f_node->file_ptr, buffer, size);
   }
   return -1;
 }
@@ -463,135 +501,39 @@ void close1 (int fd){
   free (f_node);
 }
 
-bool is_user_vaddr_valid (void* addr, struct intr_frame *f){
-  if (addr == NULL || !is_user_vaddr(addr) || addr < 0x8048000)
-    return false;
-  struct thread * cur = thread_current ();
-  bool success = pagedir_get_page (cur->pagedir, addr);
-  if (!success){
-    if (addr > f->esp || addr == f->esp-4 || addr == f->esp-32){
-      // grow stack!
-      void *upage = pg_round_down (addr);
-      if (sup_pte_lookup (&cur->sup_pt, upage) != NULL)
-        return true;
-      void *kpage = get_free_frame (upage);
-      success = pagedir_set_page (cur->pagedir, upage, kpage, true);
-    }
-    else{
-      struct sup_page_table_entry *spte;
-      void *fault_page = pg_round_down (addr);
-	    spte = sup_pte_lookup (&cur->sup_pt, fault_page);
-      if (spte != NULL)
-        return sup_load_page (&cur->sup_pt, cur->pagedir, fault_page);
-      else
-        return false;
-    }
-  }
-  return success;
+#ifdef FILESYS
+bool chdir1 (const char *dir){
+  lock_acquire (&file_lock);
+  bool ret = filesys_chdir (dir);
+  lock_release (&file_lock);
+  return ret;
 }
 
-mmapid_t
-mmap1 (int fd, void *addr)
-{
-  struct file_node *f_node;
-  struct thread *curr = thread_current ();
-  struct file *f = NULL;
-
-  if (addr == NULL || (pg_ofs (addr) != 0) || fd == 0 || fd == 1)
-    return -1;
-
-  f_node = search_fd (&curr->files, fd, false);
-  if (f_node == NULL)
-    return -1;
-  else
-  {
-    f = file_reopen(f_node->file_ptr);
-  }
-
-  if (file_length (f_node->file_ptr) <= 0)
-    return -1;
-
-  int ofs;
-  int f_len = file_length (f_node->file_ptr);
-  for (ofs = 0; ofs < f_len; ofs += PGSIZE){
-    void *upage = pg_round_down(addr + ofs);
-    if (sup_pte_lookup 
-      (&curr->sup_pt, upage) || pagedir_get_page(curr->pagedir, upage))
-    {
-      return -1;
-    }
-    // !!! we can't combine the following part here!
-  }
-  // traverse the file pages and set them to supt sequentially
-  for (ofs = 0; ofs < f_len; ofs += PGSIZE){
-    void *page_num = addr + ofs;
-    size_t read_bytes = (ofs + PGSIZE < f_len ? PGSIZE : f_len - ofs);
-    size_t zero_bytes = PGSIZE - read_bytes;
-
-    supt_set_page_from_MMF 
-      (&curr->sup_pt, page_num, f, ofs, read_bytes, zero_bytes);
-  }
-  int f_len_new = file_length (f_node->file_ptr);
-  // create the corresponding memory mapped file
-  mmapid_t result = mmf_create (addr, f, f_len_new);
-  return (f == NULL) ? -1 : result;
+bool mkdir1 (const char *dir){
+  lock_acquire (&file_lock);
+  bool ret = filesys_mkdir (dir);
+  lock_release (&file_lock);
+  return ret;
 }
 
-void
-munmap1 (mmapid_t mid)
-{
-  struct thread *curr = thread_current ();
-  struct list_elem *e;
-  struct list_elem *el;
-  struct list *mmfiles = &curr->mmf_list;
-  if (list_empty (mmfiles)){
-    exit_wrong(-1);
-  }
-
-  // find the mmfile in mmf_list according to the mid!
-  for (e = list_begin (mmfiles); e != list_end (mmfiles); e = list_next (e))
-  {
-    struct mmf_node *mmfile = list_entry (e, struct mmf_node, elem);
-    if(mmfile->mid == mid)
-    {
-      // delete the file from mmf_list
-      el = list_remove (&mmfile->elem);
-      if (el != NULL)
-      {
-        struct mmf_node *mmf_ptr = list_entry (e, struct mmf_node, elem);
-        mmf_free (mmf_ptr);
-      }
-    }
-  }
+bool readdir1 (int fd, char *name){
+  lock_acquire (&file_lock);
+  bool ret = filesys_readdir (fd, name);
+  lock_release (&file_lock);
+  return ret;
 }
 
-void
-mmf_free (struct mmf_node* mmf_ptr)
-{
-  struct thread *curr = thread_current ();
-  struct hash_elem *he;
-  struct sup_page_table_entry spte;
-  struct sup_page_table_entry *spte_ptr;
-
-  // traverse the pages, delete each entry iteratively
-  for (int ofs = 0; ofs != mmf_ptr->page_num; ofs ++)
-  {
-    spte.upage = mmf_ptr->addr + ofs*PGSIZE;
-    he = hash_delete (&curr->sup_pt, &spte.hash_elem);
-    if (he != NULL)
-    {
-      spte_ptr = hash_entry (he, struct sup_page_table_entry, hash_elem);
-      // if dirty: the file has been writen
-      if (spte_ptr->status == ON_FRAME && 
-          pagedir_is_dirty (curr->pagedir, spte_ptr->upage))
-      {
-        // write it back from upage to the original file
-        file_seek (spte_ptr->file, spte_ptr->file_offset);
-        file_write (spte_ptr->file, spte_ptr->upage, spte_ptr->read_bytes);
-      }
-      free (spte_ptr);
-    }
-  }
-  // close the file !!!
-  file_close (mmf_ptr->file_ptr);
+bool isdir1 (int fd){
+  lock_acquire (&file_lock);
+  bool ret = filesys_isdir (fd);
+  lock_release (&file_lock);
+  return ret;
 }
+
+int inumber1 (int fd){
+  lock_acquire (&file_lock);
+  int ret = filesys_inumber (fd);
+  lock_release (&file_lock);
+  return ret;
+}
+#endif
